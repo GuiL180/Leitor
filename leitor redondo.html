@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Circuit Pro</title>
+    
+    <!-- Bibliotecas externas -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #ffffff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        #header { padding: 15px; background: #1e1e1e; border-bottom: 1px solid #333; z-index: 10; text-align: center; }
+        input[type="file"] { width: 100%; padding: 8px; margin-top: 5px; background: #333; color: white; border: 1px solid #555; border-radius: 4px; }
+        #status { color: #888; margin-top: 8px; font-weight: bold; font-size: 1em; }
+
+        #scanner-container { flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: hidden; position: relative; }
+        #reader { width: 100%; height: 100%; border: none; }
+
+        #manual-search { padding: 10px; background: #2c2c2c; display: flex; gap: 10px; border-bottom: 2px solid #555; z-index: 10; }
+        #brInput { flex: 1; padding: 12px; font-size: 1.1em; border-radius: 4px; border: 1px solid #555; background: #121212; color: #fff; text-transform: uppercase; }
+        #btnBuscar { padding: 10px 20px; background: #ee4d2d; color: white; font-weight: bold; border: none; border-radius: 4px; font-size: 1.1em; }
+
+        #result-panel { height: 35%; background: #1e1e1e; padding: 15px; text-align: center; overflow-y: auto; z-index: 10; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: center; }
+        
+        .parada-destaque { font-size: 4.5em; font-weight: bold; color: #4caf50; line-height: 1; margin: 5px 0; }
+        .endereco-destaque { font-size: 1.2em; color: #ddd; word-break: break-word; }
+        .erro-destaque { font-size: 2em; font-weight: bold; color: #f44336; margin-top: 5px; }
+        
+        .success-flash { animation: flashGreen 0.5s ease-out; }
+        .error-flash { animation: flashRed 0.5s ease-out; }
+        
+        @keyframes flashGreen { 0% { background-color: #2e7d32; } 100% { background-color: #1e1e1e; } }
+        @keyframes flashRed { 0% { background-color: #c62828; } 100% { background-color: #1e1e1e; } }
+        
+        #reader__dashboard_section_swaplink { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <label style="font-weight: bold; font-size: 1.1em; color: #ee4d2d;">Carregar Rota (PDF ou XLSX):</label>
+        <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls">
+        <div id="status">Aguardando arquivo...</div>
+    </div>
+
+    <div id="scanner-container">
+        <div id="reader"></div>
+    </div>
+
+    <div id="manual-search">
+        <input type="text" id="brInput" placeholder="Digite a BR aqui...">
+        <button id="btnBuscar">BUSCAR</button>
+    </div>
+
+    <div id="result-panel">
+        <div id="pacoteDetails">
+            <h3 style="color: #888; font-size: 1.2em;">Aguardando pacote...</h3>
+            <p style="color: #666; margin-top: 5px;">Bipe ou digite a BR acima</p>
+        </div>
+    </div>
+
+    <script>
+        let romaneioData = [];
+        let ultimoCodigoLido = "";
+        let scanPausado = false;
+
+        const somSucesso = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+        const somErro = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg');
+
+        function atualizarStatus(qtd) {
+            document.getElementById('status').innerText = `✅ Pronto! ${qtd} paradas processadas.`;
+            document.getElementById('status').style.color = "#4caf50";
+        }
+
+        // Função universal para extrair os dados limpos, seja de Excel ou PDF
+        function processarLinha(line, extractedData) {
+            const brMatch = line.match(/(BR[0-9A-Z]+)/i);
+            if (brMatch) {
+                let codigo = brMatch[1].toUpperCase();
+                let endereco = "Endereço não identificado";
+                let partes = line.split(';');
+                if (partes.length > 1) {
+                    endereco = partes[1].trim();
+                } else {
+                    // Caso o ponto e vírgula falhe, pega o texto inteiro e remove o BR
+                    endereco = line.replace(codigo, '').replace(/\|/g, '').trim();
+                }
+
+                let parada = "N/A";
+                // Procura o primeiro número no início da linha (que é o padrão do Circuit)
+                const numMatch = line.trim().match(/^(\d+)/);
+                if (numMatch) {
+                    parada = numMatch[1];
+                }
+
+                extractedData.push({ parada: parada, codigo: codigo, endereco: endereco, raw: line });
+            }
+        }
+
+        // --- CARREGAMENTO DE ARQUIVOS ---
+        document.getElementById('fileInput').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            
+            document.getElementById('status').innerText = "⏳ Processando arquivo...";
+            document.getElementById('status').style.color = "#ffa500";
+            let extractedData = [];
+
+            if (file.name.toLowerCase().endsWith('.pdf')) {
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    try {
+                        const typedarray = new Uint8Array(this.result);
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            
+                            let items = textContent.items;
+                            items.sort((a, b) => {
+                                if (Math.abs(b.transform[5] - a.transform[5]) > 5) return b.transform[5] - a.transform[5];
+                                return a.transform[4] - b.transform[4];
+                            });
+
+                            let currentLineY = -1;
+                            let lineText = "";
+
+                            for (let item of items) {
+                                if (currentLineY === -1 || Math.abs(item.transform[5] - currentLineY) > 5) {
+                                    if (lineText.trim() !== "") processarLinha(lineText, extractedData);
+                                    lineText = item.str;
+                                    currentLineY = item.transform[5];
+                                } else {
+                                    lineText += " " + item.str;
+                                }
+                            }
+                            if (lineText.trim() !== "") processarLinha(lineText, extractedData);
+                        }
+                        romaneioData = extractedData;
+                        atualizarStatus(romaneioData.length);
+                    } catch (error) {
+                        document.getElementById('status').innerText = "❌ Erro ao ler PDF.";
+                        document.getElementById('status').style.color = "#f44336";
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                // Motor Excel (Convertendo tudo para texto para ignorar cabeçalhos errados)
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    
+                    // header: 1 lê a planilha como um array de arrays (linhas puras)
+                    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    rawRows.forEach(row => {
+                        // Junta as colunas em uma linha só e processa igual ao PDF
+                        let line = row.join(" | ");
+                        processarLinha(line, extractedData);
+                    });
+                    
+                    romaneioData = extractedData;
+                    atualizarStatus(romaneioData.length);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        // --- MOTOR DE BUSCA ---
+        function buscarPacote(codigoParaBuscar) {
+            if (!codigoParaBuscar || codigoParaBuscar.trim() === "") return;
+            
+            const resultPanel = document.getElementById('result-panel');
+            const detailsDiv = document.getElementById('pacoteDetails');
+            const termoBusca = String(codigoParaBuscar).toUpperCase().trim();
+            
+            // Agora todos os pacotes tem a mesma estrutura limpa
+            const pacote = romaneioData.find(item => 
+                item.codigo === termoBusca || (item.raw && item.raw.toUpperCase().includes(termoBusca))
+            );
+
+            if (pacote) {
+                somSucesso.play().catch(() => {});
+                resultPanel.classList.remove('error-flash');
+                resultPanel.classList.add('success-flash');
+                setTimeout(() => resultPanel.classList.remove('success-flash'), 500);
+
+                detailsDiv.innerHTML = `
+                    <div style="color: #4caf50; font-weight: bold; font-size: 1.2em;">✅ ENCONTRADO</div>
+                    <div class="parada-destaque">PARADA ${pacote.parada}</div>
+                    <div class="endereco-destaque">${pacote.endereco}</div>
+                `;
+            } else {
+                somErro.play().catch(() => {});
+                resultPanel.classList.remove('success-flash');
+                resultPanel.classList.add('error-flash');
+                setTimeout(() => resultPanel.classList.remove('error-flash'), 500);
+
+                detailsDiv.innerHTML = `
+                    <div class="erro-destaque">❌ NÃO ENCONTRADO</div>
+                    <div style="margin-top: 5px; color: #aaa;">BR Lida: ${codigoParaBuscar}</div>
+                `;
+            }
+        }
+
+        document.getElementById('btnBuscar').addEventListener('click', function() {
+            let input = document.getElementById('brInput');
+            buscarPacote(input.value);
+            input.value = ''; 
+        });
+
+        document.getElementById('brInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                buscarPacote(this.value);
+                this.value = ''; 
+                this.blur(); 
+            }
+        });
+
+        function onScanSuccess(decodedText, decodedResult) {
+            if (decodedText === ultimoCodigoLido || scanPausado) return;
+            
+            ultimoCodigoLido = decodedText;
+            scanPausado = true;
+            setTimeout(() => { ultimoCodigoLido = ""; scanPausado = false; }, 2000);
+            
+            buscarPacote(decodedText);
+        }
+
+        let html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
+        );
+        html5QrcodeScanner.render(onScanSuccess);
+    </script>
+</body>
+</html>
