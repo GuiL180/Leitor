@@ -15,17 +15,21 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #ffffff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
+        /* Topo: Upload */
         #header { padding: 15px; background: #1e1e1e; border-bottom: 1px solid #333; z-index: 10; text-align: center; }
         input[type="file"] { width: 100%; padding: 8px; margin-top: 5px; background: #333; color: white; border: 1px solid #555; border-radius: 4px; }
         #status { color: #888; margin-top: 8px; font-weight: bold; font-size: 1em; }
 
+        /* Meio: Câmera */
         #scanner-container { flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: hidden; position: relative; }
         #reader { width: 100%; height: 100%; border: none; }
 
+        /* Busca Manual */
         #manual-search { padding: 10px; background: #2c2c2c; display: flex; gap: 10px; border-bottom: 2px solid #555; z-index: 10; }
         #brInput { flex: 1; padding: 12px; font-size: 1.1em; border-radius: 4px; border: 1px solid #555; background: #121212; color: #fff; text-transform: uppercase; }
         #btnBuscar { padding: 10px 20px; background: #ee4d2d; color: white; font-weight: bold; border: none; border-radius: 4px; font-size: 1.1em; }
 
+        /* Fixo Embaixo: Resultado */
         #result-panel { height: 35%; background: #1e1e1e; padding: 15px; text-align: center; overflow-y: auto; z-index: 10; box-shadow: 0 -4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: center; }
         
         .parada-destaque { font-size: 4.5em; font-weight: bold; color: #4caf50; line-height: 1; margin: 5px 0; }
@@ -78,7 +82,6 @@
             document.getElementById('status').style.color = "#4caf50";
         }
 
-        // Função universal para extrair os dados limpos, seja de Excel ou PDF
         function processarLinha(line, extractedData) {
             const brMatch = line.match(/(BR[0-9A-Z]+)/i);
             if (brMatch) {
@@ -88,12 +91,10 @@
                 if (partes.length > 1) {
                     endereco = partes[1].trim();
                 } else {
-                    // Caso o ponto e vírgula falhe, pega o texto inteiro e remove o BR
                     endereco = line.replace(codigo, '').replace(/\|/g, '').trim();
                 }
 
                 let parada = "N/A";
-                // Procura o primeiro número no início da linha (que é o padrão do Circuit)
                 const numMatch = line.trim().match(/^(\d+)/);
                 if (numMatch) {
                     parada = numMatch[1];
@@ -103,7 +104,6 @@
             }
         }
 
-        // --- CARREGAMENTO DE ARQUIVOS ---
         document.getElementById('fileInput').addEventListener('change', async function(e) {
             const file = e.target.files[0];
             if(!file) return;
@@ -152,18 +152,14 @@
                 };
                 reader.readAsArrayBuffer(file);
             } else {
-                // Motor Excel (Convertendo tudo para texto para ignorar cabeçalhos errados)
                 const reader = new FileReader();
                 reader.onload = function(event) {
                     const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
                     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-                    
-                    // header: 1 lê a planilha como um array de arrays (linhas puras)
                     const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                     
                     rawRows.forEach(row => {
-                        // Junta as colunas em uma linha só e processa igual ao PDF
                         let line = row.join(" | ");
                         processarLinha(line, extractedData);
                     });
@@ -175,7 +171,6 @@
             }
         });
 
-        // --- MOTOR DE BUSCA ---
         function buscarPacote(codigoParaBuscar) {
             if (!codigoParaBuscar || codigoParaBuscar.trim() === "") return;
             
@@ -183,7 +178,6 @@
             const detailsDiv = document.getElementById('pacoteDetails');
             const termoBusca = String(codigoParaBuscar).toUpperCase().trim();
             
-            // Agora todos os pacotes tem a mesma estrutura limpa
             const pacote = romaneioData.find(item => 
                 item.codigo === termoBusca || (item.raw && item.raw.toUpperCase().includes(termoBusca))
             );
@@ -236,8 +230,15 @@
             buscarPacote(decodedText);
         }
 
+        // --- QUADRADO PERFEITO PARA QR CODE ---
         let html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
+            "reader", 
+            { 
+                fps: 10, 
+                qrbox: { width: 250, height: 250 }, // Quadrado agora!
+                videoConstraints: { facingMode: "environment" } 
+            }, 
+            false
         );
         html5QrcodeScanner.render(onScanSuccess);
     </script>
