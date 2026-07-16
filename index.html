@@ -49,7 +49,7 @@
 <body>
 
     <div id="header">
-        <label style="font-weight: bold; font-size: 1.1em; color: #ee4d2d;">Carregar Rota (XLSX):</label>
+        <label style="font-weight: bold; font-size: 1.1em; color: #ee4d2d;">Carregar Rota (PDF ou XLSX):</label>
         <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls">
         <div id="status">Aguardando arquivo...</div>
     </div>
@@ -77,6 +77,23 @@
 
         const somSucesso = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
         const somErro = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg');
+
+        // --- FUNÇÕES DE MEMÓRIA ---
+        function salvarNoLocalStorage(dados) {
+            localStorage.setItem('meuRomaneio', JSON.stringify(dados));
+        }
+
+        function carregarDoLocalStorage() {
+            const dadosSalvos = localStorage.getItem('meuRomaneio');
+            if (dadosSalvos) {
+                romaneioData = JSON.parse(dadosSalvos);
+                atualizarStatus(romaneioData.length);
+            }
+        }
+
+        window.onload = function() {
+            carregarDoLocalStorage();
+        };
 
         function atualizarStatus(qtd) {
             document.getElementById('status').innerText = `✅ Pronto! ${qtd} paradas processadas.`;
@@ -119,32 +136,24 @@
                     try {
                         const typedarray = new Uint8Array(this.result);
                         const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                        
+                        let textCompleto = ""; 
+
                         for (let i = 1; i <= pdf.numPages; i++) {
                             const page = await pdf.getPage(i);
                             const textContent = await page.getTextContent();
-                            
-                            let items = textContent.items;
-                            items.sort((a, b) => {
-                                if (Math.abs(b.transform[5] - a.transform[5]) > 5) return b.transform[5] - a.transform[5];
-                                return a.transform[4] - b.transform[4];
-                            });
-
-                            let currentLineY = -1;
-                            let lineText = "";
-
-                            for (let item of items) {
-                                if (currentLineY === -1 || Math.abs(item.transform[5] - currentLineY) > 5) {
-                                    if (lineText.trim() !== "") processarLinha(lineText, extractedData);
-                                    lineText = item.str;
-                                    currentLineY = item.transform[5];
-                                } else {
-                                    lineText += " " + item.str;
-                                }
-                            }
-                            if (lineText.trim() !== "") processarLinha(lineText, extractedData);
+                            textCompleto += textContent.items.map(s => s.str).join(" ") + " ";
                         }
+
+                        const linhas = textCompleto.split(/(?=BR[0-9A-Z]+)/i); 
+                        
+                        linhas.forEach(line => {
+                            if (line.includes("BR")) {
+                                processarLinha(line, extractedData);
+                            }
+                        });
+
                         romaneioData = extractedData;
+                        salvarNoLocalStorage(romaneioData);
                         atualizarStatus(romaneioData.length);
                     } catch (error) {
                         document.getElementById('status').innerText = "❌ Erro ao ler PDF.";
@@ -166,6 +175,7 @@
                     });
                     
                     romaneioData = extractedData;
+                    salvarNoLocalStorage(romaneioData);
                     atualizarStatus(romaneioData.length);
                 };
                 reader.readAsArrayBuffer(file);
@@ -231,12 +241,11 @@
             buscarPacote(decodedText);
         }
 
-        // --- QUADRADO PERFEITO PARA QR CODE ---
         let html5QrcodeScanner = new Html5QrcodeScanner(
             "reader", 
             { 
                 fps: 10, 
-                qrbox: { width: 250, height: 250 }, // Quadrado agora!
+                qrbox: { width: 250, height: 250 },
                 videoConstraints: { facingMode: "environment" } 
             }, 
             false
