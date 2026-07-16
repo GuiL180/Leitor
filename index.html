@@ -6,11 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scanner Circuit Pro</title>
     
-    <!-- Bibliotecas externas -->
+    <!-- Bibliotecas externas (Somente Scanner e Excel) -->
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
 
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -49,8 +47,8 @@
 <body>
 
     <div id="header">
-        <label style="font-weight: bold; font-size: 1.1em; color: #ee4d2d;">Carregar Rota (PDF ou XLSX):</label>
-        <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls">
+        <label style="font-weight: bold; font-size: 1.1em; color: #ee4d2d;">Carregar Rota (XLSX):</label>
+        <input type="file" id="fileInput" accept=".xlsx, .xls">
         <div id="status">Aguardando arquivo...</div>
     </div>
 
@@ -78,7 +76,7 @@
         const somSucesso = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
         const somErro = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg');
 
-        // --- FUNÇÕES DE MEMÓRIA ---
+        // --- SISTEMA DE MEMÓRIA ---
         function salvarNoLocalStorage(dados) {
             localStorage.setItem('meuRomaneio', JSON.stringify(dados));
         }
@@ -96,10 +94,11 @@
         };
 
         function atualizarStatus(qtd) {
-            document.getElementById('status').innerText = `✅ Pronto! ${qtd} paradas processadas.`;
+            document.getElementById('status').innerText = `✅ Pronto! ${qtd} paradas salvas.`;
             document.getElementById('status').style.color = "#4caf50";
         }
 
+        // --- PROCESSAMENTO DO EXCEL ---
         function processarLinha(line, extractedData) {
             const brMatch = line.match(/(BR[0-9A-Z]+)/i);
             if (brMatch) {
@@ -122,7 +121,7 @@
             }
         }
 
-        document.getElementById('fileInput').addEventListener('change', async function(e) {
+        document.getElementById('fileInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if(!file) return;
             
@@ -130,40 +129,9 @@
             document.getElementById('status').style.color = "#ffa500";
             let extractedData = [];
 
-            if (file.name.toLowerCase().endsWith('.pdf')) {
-                const reader = new FileReader();
-                reader.onload = async function() {
-                    try {
-                        const typedarray = new Uint8Array(this.result);
-                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                        let textCompleto = ""; 
-
-                        for (let i = 1; i <= pdf.numPages; i++) {
-                            const page = await pdf.getPage(i);
-                            const textContent = await page.getTextContent();
-                            textCompleto += textContent.items.map(s => s.str).join(" ") + " ";
-                        }
-
-                        const linhas = textCompleto.split(/(?=BR[0-9A-Z]+)/i); 
-                        
-                        linhas.forEach(line => {
-                            if (line.includes("BR")) {
-                                processarLinha(line, extractedData);
-                            }
-                        });
-
-                        romaneioData = extractedData;
-                        salvarNoLocalStorage(romaneioData);
-                        atualizarStatus(romaneioData.length);
-                    } catch (error) {
-                        document.getElementById('status').innerText = "❌ Erro ao ler PDF.";
-                        document.getElementById('status').style.color = "#f44336";
-                    }
-                };
-                reader.readAsArrayBuffer(file);
-            } else {
-                const reader = new FileReader();
-                reader.onload = function(event) {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
                     const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
                     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -177,11 +145,15 @@
                     romaneioData = extractedData;
                     salvarNoLocalStorage(romaneioData);
                     atualizarStatus(romaneioData.length);
-                };
-                reader.readAsArrayBuffer(file);
-            }
+                } catch (error) {
+                    document.getElementById('status').innerText = "❌ Erro ao ler planilha.";
+                    document.getElementById('status').style.color = "#f44336";
+                }
+            };
+            reader.readAsArrayBuffer(file);
         });
 
+        // --- SISTEMA DE BUSCA ---
         function buscarPacote(codigoParaBuscar) {
             if (!codigoParaBuscar || codigoParaBuscar.trim() === "") return;
             
@@ -231,6 +203,7 @@
             }
         });
 
+        // --- SISTEMA DE CÂMERA ---
         function onScanSuccess(decodedText, decodedResult) {
             if (decodedText === ultimoCodigoLido || scanPausado) return;
             
